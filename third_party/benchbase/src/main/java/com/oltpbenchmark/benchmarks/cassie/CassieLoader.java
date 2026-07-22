@@ -20,7 +20,6 @@ package com.oltpbenchmark.benchmarks.cassie;
 import com.oltpbenchmark.api.Loader;
 import com.oltpbenchmark.api.LoaderThread;
 import com.oltpbenchmark.catalog.Table;
-import com.oltpbenchmark.types.DatabaseType;
 import com.oltpbenchmark.util.SQLUtil;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
@@ -83,16 +82,9 @@ public final class CassieLoader extends Loader<CassieBenchmark> {
 
     @Override
     public void load(Connection conn) throws SQLException {
-      // Same reasoning as ZoneFabricLoader/AssetCdnLoader: small
-      // per-canvas transactions, and explicit transaction control skipped
-      // for targets (like FDB Relational) whose JDBC driver doesn't
-      // support it.
-      boolean explicitTransactions =
-          CassieLoader.this.getDatabaseType() != DatabaseType.FDBRELATIONAL;
-
-      if (explicitTransactions) {
-        conn.setAutoCommit(false);
-      }
+      // Same reasoning as ZoneFabricLoader/AssetCdnLoader: small per-canvas
+      // transactions rather than one giant uncommitted batch.
+      conn.setAutoCommit(false);
 
       try (PreparedStatement stmt = conn.prepareStatement(CassieLoader.this.sqlCanvas)) {
         stmt.setLong(1, this.canvasId);
@@ -119,9 +111,7 @@ public final class CassieLoader extends Loader<CassieBenchmark> {
           stmt.executeBatch();
         }
       }
-      if (explicitTransactions) {
-        conn.commit();
-      }
+      conn.commit();
 
       for (int s = 0; s < CassieConstants.STROKES_PER_CANVAS_SEED; s++) {
         long strokeId = this.canvasId * 1_000_000L + s;
@@ -149,9 +139,7 @@ public final class CassieLoader extends Loader<CassieBenchmark> {
           }
           stmt.executeBatch();
         }
-        if (explicitTransactions) {
-          conn.commit();
-        }
+        conn.commit();
       }
     }
   }
