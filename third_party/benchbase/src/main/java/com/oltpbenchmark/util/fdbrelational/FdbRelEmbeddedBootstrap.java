@@ -44,9 +44,9 @@ import java.util.Collections;
  * <p>Unlike the network/gRPC driver ({@code fdb-relational-jdbc}'s {@code JDBCRelationalDriver}),
  * {@code EmbeddedRelationalDriver} is NOT auto-discoverable via {@code
  * META-INF/services/java.sql.Driver} - there is no such service file under {@code
- * fdb-relational-core}, and the driver has no public no-arg constructor. It must be constructed
- * and registered explicitly, once per JVM, before any {@code jdbc:embed:} connection is opened.
- * This mirrors the pattern in fdb-record-layer's own {@code JDBCEmbedDriverTest}.
+ * fdb-relational-core}, and the driver has no public no-arg constructor. It must be constructed and
+ * registered explicitly, once per JVM, before any {@code jdbc:embed:} connection is opened. This
+ * mirrors the pattern in fdb-record-layer's own {@code JDBCEmbedDriverTest}.
  *
  * <p>Call {@link #register()} exactly once, as early as possible in the process (see {@link
  * FdbRelEmbeddedLauncher} and {@link FdbRelSchemaBootstrap}).
@@ -55,7 +55,8 @@ public final class FdbRelEmbeddedBootstrap {
   private FdbRelEmbeddedBootstrap() {}
 
   public static void register() throws SQLException {
-    RelationalKeyspaceProvider.instance().registerDomainIfNotExists(FdbRelConstants.KEYSPACE_DOMAIN);
+    RelationalKeyspaceProvider.instance()
+        .registerDomainIfNotExists(FdbRelConstants.KEYSPACE_DOMAIN);
 
     RecordLayerConfig rlCfg = RecordLayerConfig.getDefault();
 
@@ -64,8 +65,10 @@ public final class FdbRelEmbeddedBootstrap {
     final FDBDatabase database = FDBDatabaseFactory.instance().getDatabase();
 
     StoreCatalog storeCatalog;
-    try (var txn = new DirectFdbConnection(database).getTransactionManager().createTransaction(Options.NONE)) {
-      storeCatalog = StoreCatalogProvider.getCatalog(txn, RelationalKeyspaceProvider.instance().getKeySpace());
+    try (var txn =
+        new DirectFdbConnection(database).getTransactionManager().createTransaction(Options.NONE)) {
+      storeCatalog =
+          StoreCatalogProvider.getCatalog(txn, RelationalKeyspaceProvider.instance().getKeySpace());
       txn.commit();
     } catch (Exception e) {
       throw new SQLException("Failed to initialize FDB Relational store catalog", e);

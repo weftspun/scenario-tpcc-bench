@@ -478,7 +478,7 @@ public abstract class Worker<T extends BenchmarkModule> implements Runnable {
 
           if (indicatesReadOnly(ex)) {
             if (SQLUtil.isConnectionOK(conn)) {
-              conn.setReadOnly(true);
+              trySetReadOnly(conn, true);
             }
           }
 
@@ -486,7 +486,7 @@ public abstract class Worker<T extends BenchmarkModule> implements Runnable {
           if (!isConnectionErrorException && SQLUtil.isConnectionOK(conn)) {
             // if the error is that we're attempting a write transaction to a read-only secondary,
             // then we can't rollback anyways, so don't bother trying
-            if (conn.isReadOnly()) {
+            if (isConnReadOnly(conn)) {
               // in that case, we should close the connection and possibly try again
               LOG.debug(
                   String.format(
@@ -678,6 +678,34 @@ public abstract class Worker<T extends BenchmarkModule> implements Runnable {
     // TODO
 
     return false;
+  }
+
+  /**
+   * Some JDBC drivers (e.g. FDB Relational's EMBEDDED driver) throw {@link
+   * java.sql.SQLFeatureNotSupportedException} from the optional {@link Connection#isReadOnly()}
+   * check instead of just returning a value. That exception is thrown from inside this class's own
+   * {@code catch (SQLException ex)} block, so left unguarded it escapes doWork() entirely and kills
+   * the worker thread outright - the harness never observes the transaction as an ordinary error,
+   * it just loses a worker and can hang waiting for a "done" signal that thread will now never
+   * send. Treat "can't tell" the same as "not read-only" so the normal retry/error accounting below
+   * still runs.
+   */
+  private boolean isConnReadOnly(Connection conn) {
+    try {
+      return conn.isReadOnly();
+    } catch (SQLException ex) {
+      LOG.debug("Connection.isReadOnly() not supported by this driver; assuming false.", ex);
+      return false;
+    }
+  }
+
+  /** See {@link #isConnReadOnly(Connection)} - same treatment for the paired setter. */
+  private void trySetReadOnly(Connection conn, boolean readOnly) {
+    try {
+      conn.setReadOnly(readOnly);
+    } catch (SQLException ex) {
+      LOG.debug("Connection.setReadOnly() not supported by this driver; ignoring.", ex);
+    }
   }
 
   private boolean isRetryable(SQLException ex) {

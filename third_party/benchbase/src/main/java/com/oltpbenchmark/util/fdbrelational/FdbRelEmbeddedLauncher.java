@@ -24,15 +24,17 @@ import com.oltpbenchmark.DBWorkload;
  *
  * <p>BenchBase's normal startup path only does {@code Class.forName(driverClassName)} before
  * connecting, which is enough to trigger driver self-registration for drivers that register
- * themselves in a static initializer (the JDBC convention every other {@code DatabaseType} in
- * this project relies on). {@code EmbeddedRelationalDriver} does not follow that convention - it
- * has no public no-arg constructor and must be built and registered explicitly (see {@link
+ * themselves in a static initializer (the JDBC convention every other {@code DatabaseType} in this
+ * project relies on). {@code EmbeddedRelationalDriver} does not follow that convention - it has no
+ * public no-arg constructor and must be built and registered explicitly (see {@link
  * FdbRelEmbeddedBootstrap}). This launcher does that registration once, then delegates straight
- * into BenchBase's own {@link DBWorkload#main}, unmodified, with the same CLI arguments - from
- * that point on BenchBase's connection pool calling {@code DriverManager.getConnection("jdbc:embed:...")}
- * resolves to the already-registered driver like any other JDBC driver would.
+ * into BenchBase's own {@link DBWorkload#main}, unmodified, with the same CLI arguments - from that
+ * point on BenchBase's connection pool calling {@code
+ * DriverManager.getConnection("jdbc:embed:...")} resolves to the already-registered driver like any
+ * other JDBC driver would.
  *
- * <p>Run as: {@code java -cp benchbase.jar com.oltpbenchmark.util.fdbrelational.FdbRelEmbeddedLauncher <benchbase args>}
+ * <p>Run as: {@code java -cp benchbase.jar
+ * com.oltpbenchmark.util.fdbrelational.FdbRelEmbeddedLauncher <benchbase args>}
  */
 public final class FdbRelEmbeddedLauncher {
   private FdbRelEmbeddedLauncher() {}

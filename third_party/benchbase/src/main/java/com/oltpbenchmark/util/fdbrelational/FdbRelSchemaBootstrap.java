@@ -22,18 +22,18 @@ import java.sql.DriverManager;
 import java.sql.Statement;
 
 /**
- * Pre-provisions BenchBase's standard {@code tpcc} benchmark schema against FDB Relational
- * Layer's EMBEDDED driver, using FRL's own schema-template DDL dialect. Must run BEFORE BenchBase
- * (via {@link FdbRelEmbeddedLauncher}), which is then invoked with {@code --create=false} -
- * BenchBase's own {@code createDatabase()} can't express FRL's dialect (schema templates, {@code
- * CREATE DATABASE /path/segments}) from a connect-then-DDL flow.
+ * Pre-provisions BenchBase's standard {@code tpcc} benchmark schema against FDB Relational Layer's
+ * EMBEDDED driver, using FRL's own schema-template DDL dialect. Must run BEFORE BenchBase (via
+ * {@link FdbRelEmbeddedLauncher}), which is then invoked with {@code --create=false} - BenchBase's
+ * own {@code createDatabase()} can't express FRL's dialect (schema templates, {@code CREATE
+ * DATABASE /path/segments}) from a connect-then-DDL flow.
  *
- * <p>This is a deliberately literal, type-mapped port of {@code
- * benchmarks/tpcc/ddl-generic.sql}, not a hand-picked subset - the point of running the stock
- * {@code tpcc} benchmark (rather than a purpose-built one like zonefabric) is to see how much of
- * BenchBase's existing, unmodified TPCCLoader/procedures work as-is against FRL. Two mismatches
- * between TPC-C's ANSI-SQL schema and what FRL's grammar actually supports (see {@code
- * reference/sql_commands/DDL/CREATE/TABLE.html} and {@code reference/sql_types.html}):
+ * <p>This is a deliberately literal, type-mapped port of {@code benchmarks/tpcc/ddl-generic.sql},
+ * not a hand-picked subset - the point of running the stock {@code tpcc} benchmark (rather than a
+ * purpose-built one like zonefabric) is to see how much of BenchBase's existing, unmodified
+ * TPCCLoader/procedures work as-is against FRL. Two mismatches between TPC-C's ANSI-SQL schema and
+ * what FRL's grammar actually supports (see {@code reference/sql_commands/DDL/CREATE/TABLE.html}
+ * and {@code reference/sql_types.html}):
  *
  * <ul>
  *   <li>Type mapping - FRL's primitive types are only {@code string}/{@code bigint}/{@code
@@ -44,23 +44,24 @@ import java.sql.Statement;
  *       (setBigDecimal/setTimestamp) actually work against a double/bigint column under FRL's
  *       driver is exactly the open question this PR's CI run is meant to answer.
  *   <li>No {@code FOREIGN KEY}/{@code REFERENCES}/{@code UNIQUE} constraint clause exists in FRL's
- *       {@code CREATE TABLE} grammar (only {@code PRIMARY KEY(...)} or {@code SINGLE ROW ONLY}),
- *       so those are dropped entirely rather than approximated. This doesn't change TPC-C's actual
+ *       {@code CREATE TABLE} grammar (only {@code PRIMARY KEY(...)} or {@code SINGLE ROW ONLY}), so
+ *       those are dropped entirely rather than approximated. This doesn't change TPC-C's actual
  *       behavior: NewOrder/Payment/etc. already look up parent rows (WAREHOUSE/DISTRICT/CUSTOMER)
  *       by ID before touching dependents, so referential integrity is already maintained
- *       procedurally by the transactions themselves - the FK constraints in the standard DDL are
- *       a redundant DB-side safety net TPC-C's own logic doesn't depend on, not a correctness
+ *       procedurally by the transactions themselves - the FK constraints in the standard DDL are a
+ *       redundant DB-side safety net TPC-C's own logic doesn't depend on, not a correctness
  *       requirement.
  * </ul>
  *
  * <p>HISTORY is the one table this port can't cleanly express: the standard schema gives it no
  * primary key at all (it's an append-only log), but FRL requires every table to declare either
- * {@code PRIMARY KEY(...)} or {@code SINGLE ROW ONLY}. Keyed here on all of its columns
- * (H_C_W_ID, H_C_D_ID, H_C_ID, H_D_ID, H_W_ID, H_DATE) as the least-bad option, but two Payment
- * transactions for the same customer/district in the same millisecond would collide on this key -
- * a real, currently-unresolved gap, not a hidden assumption.
+ * {@code PRIMARY KEY(...)} or {@code SINGLE ROW ONLY}. Keyed here on all of its columns (H_C_W_ID,
+ * H_C_D_ID, H_C_ID, H_D_ID, H_W_ID, H_DATE) as the least-bad option, but two Payment transactions
+ * for the same customer/district in the same millisecond would collide on this key - a real,
+ * currently-unresolved gap, not a hidden assumption.
  *
- * <p>Run as: {@code java -cp benchbase.jar com.oltpbenchmark.util.fdbrelational.FdbRelSchemaBootstrap}
+ * <p>Run as: {@code java -cp benchbase.jar
+ * com.oltpbenchmark.util.fdbrelational.FdbRelSchemaBootstrap}
  */
 public final class FdbRelSchemaBootstrap {
   private FdbRelSchemaBootstrap() {}
@@ -206,7 +207,8 @@ public final class FdbRelSchemaBootstrap {
         st.execute("create database \"" + dbPath + "\"");
         System.out.println("CREATE DATABASE ok");
 
-        st.execute("create schema \"" + dbPath + "/" + schemaName + "\" with template " + templateName);
+        st.execute(
+            "create schema \"" + dbPath + "/" + schemaName + "\" with template " + templateName);
         System.out.println("CREATE SCHEMA ok");
       }
     }
@@ -225,7 +227,8 @@ public final class FdbRelSchemaBootstrap {
                 + " '')");
         st.executeUpdate("delete from WAREHOUSE where w_id = 999999");
       }
-      System.out.println("VERIFY ok: " + dbPath + "?schema=" + schemaName + " is immediately queryable");
+      System.out.println(
+          "VERIFY ok: " + dbPath + "?schema=" + schemaName + " is immediately queryable");
     }
 
     System.out.println("BOOTSTRAP DONE: " + dbPath + "?schema=" + schemaName);
