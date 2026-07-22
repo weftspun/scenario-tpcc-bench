@@ -1,0 +1,61 @@
+/*
+ * Copyright 2020 by OLTPBenchmark Project
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ */
+
+package com.oltpbenchmark.benchmarks.zonefabric.procedures;
+
+import com.oltpbenchmark.api.Procedure;
+import com.oltpbenchmark.api.SQLStmt;
+import com.oltpbenchmark.benchmarks.zonefabric.ZoneFabricConstants;
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+
+/**
+ * StockLevel-analog: the read-heavy aggregate scan. Periodically recomputes a zone's interest
+ * picture (population centroid, recent effect volume) the way StockLevel periodically checks for
+ * low-stock items across a whole district - a read that touches many rows per invocation but writes
+ * nothing.
+ */
+public class InterestFanoutScan extends Procedure {
+
+  public final SQLStmt ZonePopulationSummary =
+      new SQLStmt(
+          "SELECT COUNT(*), AVG(e_x), AVG(e_y) FROM "
+              + ZoneFabricConstants.TABLENAME_ENTITY
+              + " WHERE e_zone_id = ?");
+
+  public final SQLStmt RecentEffectCount =
+      new SQLStmt(
+          "SELECT COUNT(*) FROM "
+              + ZoneFabricConstants.TABLENAME_EFFECT_ENTITY
+              + " WHERE ef_zone_id = ? AND ef_created_tick > ?");
+
+  public void run(Connection conn, long zoneId, long sinceTick) throws SQLException {
+    try (PreparedStatement stmt = this.getPreparedStatement(conn, ZonePopulationSummary, zoneId)) {
+      try (ResultSet r = stmt.executeQuery()) {
+        r.next();
+      }
+    }
+    try (PreparedStatement stmt =
+        this.getPreparedStatement(conn, RecentEffectCount, zoneId, sinceTick)) {
+      try (ResultSet r = stmt.executeQuery()) {
+        r.next();
+      }
+    }
+  }
+}
