@@ -1,0 +1,151 @@
+name: zonefabric sweep (FDB Relational Layer)
+
+# Runs the zonefabric benchmark against a real single-node FoundationDB
+# cluster + fdb-relational-server, using the DatabaseType.FDBRELATIONAL
+# BenchBase integration added in this branch. See #3 for the fuller design
+# writeup and known open issues.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  FDB_VERSION: "7.3.77"
+  FDB_RELATIONAL_VERSION: "4.3.6.0"
+
+jobs:
+  fdbrelational-sweep:
+    name: 1-node FDB Relational
+    runs-on: ubuntu-latest
+    env:
+      ZONES: 5
+      BATCHSIZE: 128
+      TERMINALS_LIST: "1 4"
+      RUN_SECONDS: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "23"
+
+      - name: Install FoundationDB (single-node)
+        run: |
+          set -euo pipefail
+          curl -fLO "https://github.com/apple/foundationdb/releases/download/${FDB_VERSION}/foundationdb-clients_${FDB_VERSION}-1_amd64.deb"
+          curl -fLO "https://github.com/apple/foundationdb/releases/download/${FDB_VERSION}/foundationdb-server_${FDB_VERSION}-1_amd64.deb"
+          sudo dpkg -i foundationdb-clients_${FDB_VERSION}-1_amd64.deb foundationdb-server_${FDB_VERSION}-1_amd64.deb
+          # The server package's postinst normally configures a default
+          # single-process database already; make it explicit and
+          # idempotent rather than relying on that side effect.
+          for i in $(seq 1 30); do
+            if sudo fdbcli --exec "configure new single memory" 2>&1 | grep -qE "created|already"; then
+              break
+            fi
+            sleep 1
+          done
+          sudo fdbcli --exec "status minimal"
+          cat /etc/foundationdb/fdb.cluster
+
+      - name: Download FDB Relational server + JDBC driver
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/fdbrel
+          curl -fL "https://repo1.maven.org/maven2/org/foundationdb/fdb-relational-server/${FDB_RELATIONAL_VERSION}/fdb-relational-server-${FDB_RELATIONAL_VERSION}-all.jar" \
+            -o /tmp/fdbrel/server-all.jar
+          curl -fL "https://repo1.maven.org/maven2/org/foundationdb/fdb-relational-jdbc/${FDB_RELATIONAL_VERSION}/fdb-relational-jdbc-${FDB_RELATIONAL_VERSION}-driver.jar" \
+            -o /tmp/fdbrel/jdbc-driver.jar
+
+      - name: Start FDB Relational server
+        run: |
+          set -euo pipefail
+          FDB_CLUSTER_FILE=/etc/foundationdb/fdb.cluster \
+            nohup java -cp /tmp/fdbrel/server-all.jar \
+            com.apple.foundationdb.relational.server.RelationalServer -g 1111 -p 1112 \
+            > /tmp/fdbrel/server.log 2>&1 &
+          echo $! > /tmp/fdbrel/server.pid
+
+          for i in $(seq 1 30); do
+            if grep -q "Started on" /tmp/fdbrel/server.log 2>/dev/null; then
+              break
+            fi
+            sleep 1
+          done
+          grep -q "Started on" /tmp/fdbrel/server.log || (cat /tmp/fdbrel/server.log; exit 1)
+          cat /tmp/fdbrel/server.log
+
+      - name: Bootstrap zonefabric schema
+        run: |
+          set -euo pipefail
+          javac -cp /tmp/fdbrel/jdbc-driver.jar -d /tmp/fdbrel FdbRelBootstrap.java
+          java -cp /tmp/fdbrel:/tmp/fdbrel/jdbc-driver.jar FdbRelBootstrap localhost
+          # Mitigates a suspected read-your-writes visibility race seen
+          # locally, where a fresh connection immediately after CREATE
+          # DATABASE raised "Database does not exist" - see #3. Not yet
+          # root-caused; this short wait is a pragmatic CI workaround,
+          # not a fix.
+          sleep 5
+
+      - name: Build BenchBase (fdbrelational profile)
+        working-directory: third_party/benchbase
+        run: mvn -q clean package -P fdbrelational -DskipTests
+
+      - name: Extract BenchBase
+        working-directory: third_party/benchbase
+        run: |
+          mkdir -p target/benchbase-fdbrelational
+          tar xzf target/benchbase-fdbrelational.tgz -C target/benchbase-fdbrelational --strip-components=1
+
+      - name: Run sweep
+        working-directory: third_party/benchbase/target/benchbase-fdbrelational
+        run: |
+          set -euo pipefail
+          BASE=config/fdbrelational/sample_zonefabric_config.xml
+          sed -e "s|<scalefactor>5</scalefactor>|<scalefactor>${ZONES}</scalefactor>|" \
+              -e "s|<batchsize>128</batchsize>|<batchsize>${BATCHSIZE}</batchsize>|" \
+              "$BASE" > config/fdbrelational/sweep_load.xml
+
+          echo "=== LOAD (${ZONES} zones) ==="
+          java -jar benchbase.jar -b zonefabric -c config/fdbrelational/sweep_load.xml \
+            --create=false --load=true --execute=false
+
+          for T in $TERMINALS_LIST; do
+            sed -e "s|<terminals>1</terminals>|<terminals>${T}</terminals>|" \
+                -e "s|<time>60</time>|<time>${RUN_SECONDS}</time>|" \
+                config/fdbrelational/sweep_load.xml > "config/fdbrelational/sweep_t${T}.xml"
+            echo "=== TERMINALS=$T ==="
+            java -jar benchbase.jar -b zonefabric -c "config/fdbrelational/sweep_t${T}.xml" \
+              --create=false --load=false --execute=true \
+              2>&1 | grep -E "requests/sec|state=ERROR" || true
+          done
+
+      - name: Summarize results
+        if: always()
+        working-directory: third_party/benchbase/target/benchbase-fdbrelational
+        run: |
+          echo "## zonefabric FDB Relational sweep" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          for f in $(ls -t results/*.summary.json 2>/dev/null | head -"$(echo "$TERMINALS_LIST" | wc -w)"); do
+            terminals=$(grep -o '"terminals": "[0-9]*"' "$f" | grep -o '[0-9]*')
+            tp=$(grep -o '"Throughput (requests/second)": [0-9.]*' "$f" | grep -o '[0-9.]*$')
+            gp=$(grep -o '"Goodput (requests/second)": [0-9.]*' "$f" | grep -o '[0-9.]*$')
+            echo "terminals=$terminals throughput=$tp goodput=$gp" >> "$GITHUB_STEP_SUMMARY"
+          done
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload result artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: zonefabric-fdbrelational-results
+          path: third_party/benchbase/target/benchbase-fdbrelational/results/*.summary.json
+          if-no-files-found: ignore
+
+      - name: Dump FDB / FDB Relational logs on failure
+        if: failure()
+        run: |
+          sudo fdbcli --exec "status details" || true
+          cat /tmp/fdbrel/server.log || true
