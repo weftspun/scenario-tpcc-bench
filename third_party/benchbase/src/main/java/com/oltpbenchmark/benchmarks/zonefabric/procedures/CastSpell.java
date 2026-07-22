@@ -20,6 +20,7 @@ package com.oltpbenchmark.benchmarks.zonefabric.procedures;
 import com.oltpbenchmark.api.Procedure;
 import com.oltpbenchmark.api.SQLStmt;
 import com.oltpbenchmark.benchmarks.zonefabric.ZoneFabricConstants;
+import com.oltpbenchmark.types.DatabaseType;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
@@ -104,14 +105,22 @@ public class CastSpell extends Procedure {
       stmt.executeUpdate();
     }
 
+    // FDB Relational's PreparedStatement.addBatch() throws
+    // SQLFeatureNotSupportedException("Not implemented in the relational
+    // layer") - fall back to one executeUpdate() per row for that target.
+    boolean supportsBatching = this.getDbType() != DatabaseType.FDBRELATIONAL;
     try (PreparedStatement stmt = this.getPreparedStatement(conn, InsertFanoutTarget)) {
       for (long targetId : targets) {
         stmt.setLong(1, effectId);
         stmt.setLong(2, targetId);
         stmt.setDouble(3, range / 2);
-        stmt.addBatch();
+        if (supportsBatching) {
+          stmt.addBatch();
+        } else {
+          stmt.executeUpdate();
+        }
       }
-      if (!targets.isEmpty()) {
+      if (supportsBatching && !targets.isEmpty()) {
         stmt.executeBatch();
       }
     }

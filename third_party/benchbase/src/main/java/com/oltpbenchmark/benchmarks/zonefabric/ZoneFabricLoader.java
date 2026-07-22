@@ -95,6 +95,10 @@ public final class ZoneFabricLoader extends Loader<ZoneFabricBenchmark> {
       // rather than treating it as an error.
       boolean explicitTransactions =
           ZoneFabricLoader.this.getDatabaseType() != DatabaseType.FDBRELATIONAL;
+      // FDB Relational's PreparedStatement.addBatch() throws
+      // SQLFeatureNotSupportedException("Not implemented in the relational
+      // layer") - fall back to one executeUpdate() per row for that target.
+      boolean supportsBatching = ZoneFabricLoader.this.getDatabaseType() != DatabaseType.FDBRELATIONAL;
 
       if (explicitTransactions) {
         conn.setAutoCommit(false);
@@ -124,10 +128,17 @@ public final class ZoneFabricLoader extends Loader<ZoneFabricBenchmark> {
         stmtEntity.setDouble(6, this.randVel.nextLong());
         stmtEntity.setInt(7, (int) this.randRtt.nextLong());
         stmtEntity.setLong(8, 0L);
-        stmtEntity.addBatch();
+
+        if (supportsBatching) {
+          stmtEntity.addBatch();
+        } else {
+          stmtEntity.executeUpdate();
+        }
 
         if (++batchSize >= workConf.getBatchSize()) {
-          stmtEntity.executeBatch();
+          if (supportsBatching) {
+            stmtEntity.executeBatch();
+          }
           if (explicitTransactions) {
             conn.commit();
           }
@@ -135,7 +146,9 @@ public final class ZoneFabricLoader extends Loader<ZoneFabricBenchmark> {
         }
       }
       if (batchSize > 0) {
-        stmtEntity.executeBatch();
+        if (supportsBatching) {
+          stmtEntity.executeBatch();
+        }
         if (explicitTransactions) {
           conn.commit();
         }
