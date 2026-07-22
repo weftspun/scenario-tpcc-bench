@@ -97,7 +97,7 @@ jobs:
             java -cp "benchbase.jar:lib/*" com.oltpbenchmark.util.fdbrelational.FdbRelEmbeddedLauncher \
               -b zonefabric -c "config/fdbrelational/sweep_t${T}.xml" \
               --create=false --load=false --execute=true \
-              2>&1 | grep -E "requests/sec|state=ERROR" || true
+              2>&1 | grep -E "requests/sec|state=ERROR|Exception|ERROR" -A3 || true
           done
 
       - name: Summarize results
