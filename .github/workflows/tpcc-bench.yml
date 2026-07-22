@@ -1,0 +1,153 @@
+name: TPC-C sweep (1-node vs 2-node CockroachDB)
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  sweep:
+    strategy:
+      fail-fast: false
+      matrix:
+        nodes: [1, 2]
+    name: "${{ matrix.nodes }}-node CockroachDB"
+    runs-on: ubuntu-latest
+    env:
+      # Scaled down from the local-dev defaults (5 warehouses, 15s/level) so
+      # this stays fast enough for CI while still producing a real
+      # concurrency-vs-throughput curve.
+      WAREHOUSES: 2
+      BATCHSIZE: 500
+      TERMINALS_LIST: "1 4 8"
+      RUN_SECONDS: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "23"
+
+      - name: Create docker network
+        run: docker network create crdb-net
+
+      - name: Start 1-node CockroachDB
+        if: matrix.nodes == 1
+        run: |
+          docker run -d --name crdb1 --network crdb-net \
+            docker.io/cockroachdb/cockroach:latest-v24.3 \
+            start-single-node --insecure --store=type=mem,size=0.25
+
+      - name: Start 2-node CockroachDB
+        if: matrix.nodes == 2
+        run: |
+          docker run -d --name crdb1 --network crdb-net \
+            docker.io/cockroachdb/cockroach:latest-v24.3 \
+            start --insecure --store=type=mem,size=0.25 \
+            --join=crdb1:26257,crdb2:26257 --advertise-addr=crdb1 \
+            --listen-addr=0.0.0.0:26257 --http-addr=0.0.0.0:8080
+          docker run -d --name crdb2 --network crdb-net \
+            docker.io/cockroachdb/cockroach:latest-v24.3 \
+            start --insecure --store=type=mem,size=0.25 \
+            --join=crdb1:26257,crdb2:26257 --advertise-addr=crdb2 \
+            --listen-addr=0.0.0.0:26257 --http-addr=0.0.0.0:8080
+
+      - name: Wait for CockroachDB to accept connections
+        run: |
+          for i in $(seq 1 30); do
+            if docker exec crdb1 ./cockroach sql --insecure --execute="SELECT 1" >/dev/null 2>&1; then
+              echo "crdb1 reachable"
+              break
+            fi
+            sleep 2
+          done
+
+      - name: Initialize cluster (2-node only)
+        if: matrix.nodes == 2
+        run: |
+          for i in $(seq 1 15); do
+            if docker exec crdb1 ./cockroach init --insecure --host=crdb1 2>&1; then
+              break
+            fi
+            echo "init not ready yet, retrying..."
+            sleep 2
+          done
+
+      - name: Wait for cluster to be ready and create database
+        run: |
+          for i in $(seq 1 30); do
+            if docker exec crdb1 ./cockroach sql --insecure --execute="SELECT 1" >/dev/null 2>&1; then
+              break
+            fi
+            sleep 2
+          done
+          docker exec crdb1 ./cockroach sql --insecure --execute="CREATE DATABASE IF NOT EXISTS benchbase;"
+          docker exec crdb1 ./cockroach sql --insecure --execute="SHOW DATABASES;"
+
+      - name: Build BenchBase (cockroachdb profile)
+        working-directory: third_party/benchbase
+        run: mvn -q clean package -P cockroachdb -DskipTests
+
+      - name: Extract BenchBase
+        working-directory: third_party/benchbase
+        run: |
+          mkdir -p target/benchbase-cockroachdb
+          tar xzf target/benchbase-cockroachdb.tgz -C target/benchbase-cockroachdb --strip-components=1
+
+      - name: Run sweep
+        working-directory: third_party/benchbase/target/benchbase-cockroachdb
+        run: |
+          set -euo pipefail
+          BASE=config/cockroachdb/sample_tpcc_config.xml
+          sed -e "s|localhost:26257|crdb1:26257|" \
+              -e "s|<scalefactor>1</scalefactor>|<scalefactor>${WAREHOUSES}</scalefactor>|" \
+              -e "s|<batchsize>128</batchsize>|<batchsize>${BATCHSIZE}</batchsize>|" \
+              "$BASE" > config/cockroachdb/sweep_load.xml
+
+          echo "=== LOAD (${WAREHOUSES} warehouses, ${{ matrix.nodes }}-node) ==="
+          docker run --rm --network crdb-net \
+            -v "$PWD":/bb:z -w /bb \
+            eclipse-temurin:23-jdk \
+            java -jar benchbase.jar -b tpcc -c config/cockroachdb/sweep_load.xml \
+            --create=true --load=true --execute=false
+
+          for T in $TERMINALS_LIST; do
+            sed -e "s|<terminals>1</terminals>|<terminals>${T}</terminals>|" \
+                -e "s|<time>60</time>|<time>${RUN_SECONDS}</time>|" \
+                config/cockroachdb/sweep_load.xml > "config/cockroachdb/sweep_t${T}.xml"
+            echo "=== TERMINALS=$T ==="
+            docker run --rm --network crdb-net \
+              -v "$PWD":/bb:z -w /bb \
+              eclipse-temurin:23-jdk \
+              java -jar benchbase.jar -b tpcc -c "config/cockroachdb/sweep_t${T}.xml" \
+              --create=false --load=false --execute=true \
+              2>&1 | grep -E "requests/sec|state=ERROR" || true
+          done
+
+      - name: Summarize results
+        working-directory: third_party/benchbase/target/benchbase-cockroachdb
+        run: |
+          echo "## ${{ matrix.nodes }}-node CockroachDB TPC-C sweep" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          for f in $(ls -t results/*.summary.json | head -"$(echo "$TERMINALS_LIST" | wc -w)"); do
+            terminals=$(grep -o '"terminals": "[0-9]*"' "$f" | grep -o '[0-9]*')
+            tp=$(grep -o '"Throughput (requests/second)": [0-9.]*' "$f" | grep -o '[0-9.]*$')
+            gp=$(grep -o '"Goodput (requests/second)": [0-9.]*' "$f" | grep -o '[0-9.]*$')
+            echo "terminals=$terminals throughput=$tp goodput=$gp" >> "$GITHUB_STEP_SUMMARY"
+          done
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload result artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tpcc-results-${{ matrix.nodes }}node
+          path: third_party/benchbase/target/benchbase-cockroachdb/results/*.summary.json
+
+      - name: Dump CockroachDB logs on failure
+        if: failure()
+        run: |
+          docker logs crdb1 || true
+          docker logs crdb2 2>/dev/null || true
