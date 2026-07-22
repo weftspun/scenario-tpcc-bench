@@ -547,8 +547,7 @@ WHERE t.name='%s' AND c.name='%s'
       throws SQLException {
     switch (databaseType) {
       case NOISEPAGE: // fall-through
-      case HSQLDB: // fall-through
-      case FDBRELATIONAL:
+      case HSQLDB:
         return getCatalogHSQLDB(benchmarkModule);
       default:
         return getCatalogDirect(databaseType, connection);

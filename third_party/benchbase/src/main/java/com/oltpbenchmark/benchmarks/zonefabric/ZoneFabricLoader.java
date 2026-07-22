@@ -20,7 +20,6 @@ package com.oltpbenchmark.benchmarks.zonefabric;
 import com.oltpbenchmark.api.Loader;
 import com.oltpbenchmark.api.LoaderThread;
 import com.oltpbenchmark.catalog.Table;
-import com.oltpbenchmark.types.DatabaseType;
 import com.oltpbenchmark.util.RandomDistribution.DiscreteRNG;
 import com.oltpbenchmark.util.RandomDistribution.Flat;
 import com.oltpbenchmark.util.SQLUtil;
@@ -82,23 +81,9 @@ public final class ZoneFabricLoader extends Loader<ZoneFabricBenchmark> {
 
     @Override
     public void load(Connection conn) throws SQLException {
-      // FDB/mvsqlite's transaction-size limit means a whole zone's worth of
-      // entities must not accumulate in one uncommitted transaction - see
-      // README.md's note on BenchBase's TPCCLoader upstream (BENCHBASE-XXXX
-      // equivalent finding, same root cause here since this loader follows
-      // the same pattern deliberately).
-      //
-      // FDB Relational's JDBC driver throws SQLException("Not implemented
-      // setAutoCommit") - every statement auto-commits individually over its
-      // gRPC JDBCService (unary calls, no explicit BEGIN/COMMIT RPC), so
-      // there is nothing to opt out of; skip these calls for that target
-      // rather than treating it as an error.
-      boolean explicitTransactions =
-          ZoneFabricLoader.this.getDatabaseType() != DatabaseType.FDBRELATIONAL;
-
-      if (explicitTransactions) {
-        conn.setAutoCommit(false);
-      }
+      // Same reasoning as AssetCdnLoader: keep each zone's load in its own
+      // small transaction rather than one giant uncommitted batch.
+      conn.setAutoCommit(false);
 
       this.stmtZone = conn.prepareStatement(ZoneFabricLoader.this.sqlZone);
       stmtZone.setLong(1, this.zoneId);
@@ -108,9 +93,7 @@ public final class ZoneFabricLoader extends Loader<ZoneFabricBenchmark> {
       stmtZone.setInt(5, ZoneFabricConstants.INTEREST_CAPACITY);
       stmtZone.setDouble(6, Math.pow(ZoneFabricConstants.ENTITIES_PER_ZONE, 2));
       stmtZone.executeUpdate();
-      if (explicitTransactions) {
-        conn.commit();
-      }
+      conn.commit();
 
       this.stmtEntity = conn.prepareStatement(ZoneFabricLoader.this.sqlEntity);
       int batchSize = 0;
@@ -128,17 +111,13 @@ public final class ZoneFabricLoader extends Loader<ZoneFabricBenchmark> {
 
         if (++batchSize >= workConf.getBatchSize()) {
           stmtEntity.executeBatch();
-          if (explicitTransactions) {
-            conn.commit();
-          }
+          conn.commit();
           batchSize = 0;
         }
       }
       if (batchSize > 0) {
         stmtEntity.executeBatch();
-        if (explicitTransactions) {
-          conn.commit();
-        }
+        conn.commit();
       }
     }
   }
