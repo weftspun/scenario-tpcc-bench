@@ -1,0 +1,45 @@
+<?xml version="1.0"?>
+<parameters>
+
+    <!-- Connection details -->
+    <type>POSTGRES</type>
+    <driver>org.postgresql.Driver</driver>
+    <url>jdbc:postgresql://localhost:5432/benchbase?sslmode=disable&amp;ApplicationName=assetcdn&amp;reWriteBatchedInserts=true</url>
+    <username>postgres</username>
+    <password>postgres</password>
+    <reconnectOnConnectionFailure>true</reconnectOnConnectionFailure>
+    <isolation>TRANSACTION_SERIALIZABLE</isolation>
+    <batchsize>128</batchsize>
+
+    <!-- Scale factor is the number of distinct assets -->
+    <scalefactor>5</scalefactor>
+
+    <!-- The workload -->
+    <terminals>1</terminals>
+    <works>
+        <work>
+            <time>60</time>
+            <rate>10000</rate>
+            <!-- AssetFetch, AssetUpload, EntitlementCheck, CacheEviction, EdgeSyncStatus -->
+            <weights>40,15,30,3,12</weights>
+        </work>
+    </works>
+
+    <transactiontypes>
+        <transactiontype>
+            <name>AssetFetch</name>
+        </transactiontype>
+        <transactiontype>
+            <name>AssetUpload</name>
+        </transactiontype>
+        <transactiontype>
+            <name>EntitlementCheck</name>
+        </transactiontype>
+        <transactiontype>
+            <name>CacheEviction</name>
+        </transactiontype>
+        <transactiontype>
+            <name>EdgeSyncStatus</name>
+        </transactiontype>
+    </transactiontypes>
+</parameters>
