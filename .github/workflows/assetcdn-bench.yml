@@ -1,0 +1,93 @@
+name: assetcdn sweep (PostgreSQL 18)
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  postgres-sweep:
+    name: 1-node PostgreSQL 18
+    runs-on: ubuntu-latest
+    env:
+      # Scaled down from the local-dev defaults (5 assets, 60s/level) so
+      # this stays fast enough for CI while still producing a real
+      # concurrency-vs-throughput curve.
+      ASSETS: 5
+      BATCHSIZE: 128
+      TERMINALS_LIST: "1 4 8"
+      RUN_SECONDS: 10
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: benchbase
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "23"
+
+      - name: Build BenchBase (postgres profile)
+        working-directory: third_party/benchbase
+        run: mvn -q clean package -P postgres -DskipTests
+
+      - name: Extract BenchBase
+        working-directory: third_party/benchbase
+        run: |
+          mkdir -p target/benchbase-postgres
+          tar xzf target/benchbase-postgres.tgz -C target/benchbase-postgres --strip-components=1
+
+      - name: Run sweep
+        working-directory: third_party/benchbase/target/benchbase-postgres
+        run: |
+          set -euo pipefail
+          BASE=config/postgres/sample_assetcdn_config.xml
+          sed -e "s|<scalefactor>5</scalefactor>|<scalefactor>${ASSETS}</scalefactor>|" \
+              -e "s|<batchsize>128</batchsize>|<batchsize>${BATCHSIZE}</batchsize>|" \
+              "$BASE" > config/postgres/sweep_load.xml
+
+          echo "=== LOAD (${ASSETS} assets) ==="
+          java -jar benchbase.jar -b assetcdn -c config/postgres/sweep_load.xml \
+            --create=true --load=true --execute=false
+
+          for T in $TERMINALS_LIST; do
+            sed -e "s|<terminals>1</terminals>|<terminals>${T}</terminals>|" \
+                -e "s|<time>60</time>|<time>${RUN_SECONDS}</time>|" \
+                config/postgres/sweep_load.xml > "config/postgres/sweep_t${T}.xml"
+            echo "=== TERMINALS=$T ==="
+            java -jar benchbase.jar -b assetcdn -c "config/postgres/sweep_t${T}.xml" \
+              --create=false --load=false --execute=true \
+              2>&1 | grep -E "requests/sec|state=ERROR" || true
+          done
+
+      - name: Summarize results
+        working-directory: third_party/benchbase/target/benchbase-postgres
+        run: |
+          echo "## assetcdn PostgreSQL 18 sweep" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          for f in $(ls -t results/*.summary.json | head -"$(echo "$TERMINALS_LIST" | wc -w)"); do
+            terminals=$(grep -o '"terminals": "[0-9]*"' "$f" | grep -o '[0-9]*')
+            tp=$(grep -o '"Throughput (requests/second)": [0-9.]*' "$f" | grep -o '[0-9.]*$')
+            gp=$(grep -o '"Goodput (requests/second)": [0-9.]*' "$f" | grep -o '[0-9.]*$')
+            echo "terminals=$terminals throughput=$tp goodput=$gp" >> "$GITHUB_STEP_SUMMARY"
+          done
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload result artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: assetcdn-postgres-results
+          path: third_party/benchbase/target/benchbase-postgres/results/*.summary.json
