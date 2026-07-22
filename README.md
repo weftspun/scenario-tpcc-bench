@@ -1,19 +1,6 @@
 # crdb-tpcc-bench
 
-TPC-C concurrency-scaling benchmark harness for CockroachDB, built specifically
-to be directly comparable against [weftspun/mvsqlite](https://github.com/weftspun/mvsqlite)'s
-own TPC-C harness (`res/ci/tpcc-benchbase.sh`) — same tool (BenchBase), same
-TPC-C config shape (warehouse count, batch size, terminal/concurrency levels,
-run duration), only the database under test differs.
-
-## Why a separate repo
-
-mvsqlite's benchmark harness needed a custom-rebuilt `sqlite-jdbc` native
-library (see that repo's PR for why). CockroachDB needs none of that — it
-speaks the standard PostgreSQL wire protocol, so BenchBase's stock
-`cockroachdb` profile + the `org.postgresql` JDBC driver work unmodified.
-Keeping this in its own repo avoids dragging CockroachDB-specific
-infrastructure into mvsqlite's, and vice versa.
+A TPC-C concurrency-scaling benchmark harness.
 
 ## What's here
 
