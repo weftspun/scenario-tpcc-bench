@@ -1,9 +1,11 @@
 name: zonefabric sweep (FDB Relational Layer)
 
 # Runs the zonefabric benchmark against a real single-node FoundationDB
-# cluster + fdb-relational-server, using the DatabaseType.FDBRELATIONAL
-# BenchBase integration added in this branch. See #3 for the fuller design
-# writeup and known open issues.
+# cluster using FDB Relational Layer's EMBEDDED (in-process) driver - see
+# com.oltpbenchmark.util.fdbrelational.* and #3 for the fuller design
+# writeup and known open issues. No separate fdb-relational-server process
+# or gRPC network driver is involved: BenchBase's own JVM links FDB's
+# client library directly, the same way any other FDB client would.
 
 on:
   push:
@@ -19,7 +21,6 @@ concurrency:
 
 env:
   FDB_VERSION: "7.3.77"
-  FDB_RELATIONAL_VERSION: "4.3.6.0"
 
 jobs:
   fdbrelational-sweep:
@@ -56,45 +57,6 @@ jobs:
           sudo fdbcli --exec "status minimal"
           cat /etc/foundationdb/fdb.cluster
 
-      - name: Download FDB Relational server + JDBC driver
-        run: |
-          set -euo pipefail
-          mkdir -p /tmp/fdbrel
-          curl -fL "https://repo1.maven.org/maven2/org/foundationdb/fdb-relational-server/${FDB_RELATIONAL_VERSION}/fdb-relational-server-${FDB_RELATIONAL_VERSION}-all.jar" \
-            -o /tmp/fdbrel/server-all.jar
-          curl -fL "https://repo1.maven.org/maven2/org/foundationdb/fdb-relational-jdbc/${FDB_RELATIONAL_VERSION}/fdb-relational-jdbc-${FDB_RELATIONAL_VERSION}-driver.jar" \
-            -o /tmp/fdbrel/jdbc-driver.jar
-
-      - name: Start FDB Relational server
-        run: |
-          set -euo pipefail
-          FDB_CLUSTER_FILE=/etc/foundationdb/fdb.cluster \
-            nohup java -cp /tmp/fdbrel/server-all.jar \
-            com.apple.foundationdb.relational.server.RelationalServer -g 1111 -p 1112 \
-            > /tmp/fdbrel/server.log 2>&1 &
-          echo $! > /tmp/fdbrel/server.pid
-
-          for i in $(seq 1 30); do
-            if grep -q "Started on" /tmp/fdbrel/server.log 2>/dev/null; then
-              break
-            fi
-            sleep 1
-          done
-          grep -q "Started on" /tmp/fdbrel/server.log || (cat /tmp/fdbrel/server.log; exit 1)
-          cat /tmp/fdbrel/server.log
-
-      - name: Bootstrap zonefabric schema
-        run: |
-          set -euo pipefail
-          javac -cp /tmp/fdbrel/jdbc-driver.jar -d /tmp/fdbrel FdbRelBootstrap.java
-          java -cp /tmp/fdbrel:/tmp/fdbrel/jdbc-driver.jar FdbRelBootstrap localhost
-          # Mitigates a suspected read-your-writes visibility race seen
-          # locally, where a fresh connection immediately after CREATE
-          # DATABASE raised "Database does not exist" - see #3. Not yet
-          # root-caused; this short wait is a pragmatic CI workaround,
-          # not a fix.
-          sleep 5
-
       - name: Build BenchBase (fdbrelational profile)
         working-directory: third_party/benchbase
         run: mvn -q clean package -P fdbrelational -DskipTests
@@ -104,6 +66,14 @@ jobs:
         run: |
           mkdir -p target/benchbase-fdbrelational
           tar xzf target/benchbase-fdbrelational.tgz -C target/benchbase-fdbrelational --strip-components=1
+
+      - name: Bootstrap zonefabric schema
+        working-directory: third_party/benchbase/target/benchbase-fdbrelational
+        # benchbase.jar only holds BenchBase's own classes - its dependencies (including
+        # fdb-relational-core and its transitives) live in lib/, wired up via the jar's
+        # manifest Class-Path, which only takes effect under `-jar`, not `-cp`. Our custom
+        # main classes need an explicit classpath instead.
+        run: java -cp "benchbase.jar:lib/*" com.oltpbenchmark.util.fdbrelational.FdbRelSchemaBootstrap
 
       - name: Run sweep
         working-directory: third_party/benchbase/target/benchbase-fdbrelational
@@ -115,7 +85,8 @@ jobs:
               "$BASE" > config/fdbrelational/sweep_load.xml
 
           echo "=== LOAD (${ZONES} zones) ==="
-          java -jar benchbase.jar -b zonefabric -c config/fdbrelational/sweep_load.xml \
+          java -cp "benchbase.jar:lib/*" com.oltpbenchmark.util.fdbrelational.FdbRelEmbeddedLauncher \
+            -b zonefabric -c config/fdbrelational/sweep_load.xml \
             --create=false --load=true --execute=false
 
           for T in $TERMINALS_LIST; do
@@ -123,7 +94,8 @@ jobs:
                 -e "s|<time>60</time>|<time>${RUN_SECONDS}</time>|" \
                 config/fdbrelational/sweep_load.xml > "config/fdbrelational/sweep_t${T}.xml"
             echo "=== TERMINALS=$T ==="
-            java -jar benchbase.jar -b zonefabric -c "config/fdbrelational/sweep_t${T}.xml" \
+            java -cp "benchbase.jar:lib/*" com.oltpbenchmark.util.fdbrelational.FdbRelEmbeddedLauncher \
+              -b zonefabric -c "config/fdbrelational/sweep_t${T}.xml" \
               --create=false --load=false --execute=true \
               2>&1 | grep -E "requests/sec|state=ERROR" || true
           done
@@ -150,8 +122,6 @@ jobs:
           path: third_party/benchbase/target/benchbase-fdbrelational/results/*.summary.json
           if-no-files-found: ignore
 
-      - name: Dump FDB / FDB Relational logs on failure
+      - name: Dump FDB status on failure
         if: failure()
-        run: |
-          sudo fdbcli --exec "status details" || true
-          cat /tmp/fdbrel/server.log || true
+        run: sudo fdbcli --exec "status details" || true

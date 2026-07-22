@@ -1,13 +1,21 @@
 <?xml version="1.0"?>
 <parameters>
 
-    <!-- Connection details. The database/schema must already exist - see
-         FdbRelBootstrap in this repo's README, since FDB Relational's DDL
-         dialect can't be bootstrapped through BenchBase's own connect-then-
-         create-database flow (see DatabaseType.FDBRELATIONAL's javadoc). -->
+    <!-- Connection details. The database/schema must already exist - run
+         com.oltpbenchmark.util.fdbrelational.FdbRelSchemaBootstrap first, since FDB
+         Relational's DDL dialect can't be bootstrapped through BenchBase's own
+         connect-then-create-database flow (see DatabaseType.FDBRELATIONAL's javadoc).
+
+         Uses FDB Relational Layer's EMBEDDED (in-process) driver, not the standalone
+         fdb-relational-server + network/gRPC driver - run this benchmark via
+         com.oltpbenchmark.util.fdbrelational.FdbRelEmbeddedLauncher (not
+         `java -jar benchbase.jar` directly), which registers the embedded driver with
+         DriverManager before delegating into BenchBase's own main(). No separate server
+         process or port is needed; the JVM running BenchBase talks to FoundationDB
+         directly and needs libfdb_c + FDB_CLUSTER_FILE like any direct FDB client. -->
     <type>FDBRELATIONAL</type>
-    <driver>com.apple.foundationdb.relational.jdbc.JDBCRelationalDriver</driver>
-    <url>jdbc:relational://localhost:1111/frl/zonefabric?schema=PUBLIC</url>
+    <driver>com.apple.foundationdb.relational.api.EmbeddedRelationalDriver</driver>
+    <url>jdbc:embed:/FRL/zonefabric?schema=PUBLIC</url>
     <username></username>
     <password></password>
     <isolation>TRANSACTION_SERIALIZABLE</isolation>
