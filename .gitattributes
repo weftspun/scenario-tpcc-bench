@@ -1,0 +1,3 @@
+# See weftspun/mvsqlite's .gitattributes for why: Windows' core.autocrlf
+# silently corrupts vendored shell scripts' shebang lines on checkout.
+*.sh text eol=lf
