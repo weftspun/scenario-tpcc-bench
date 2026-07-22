@@ -13,7 +13,7 @@ CREATE TABLE ZONE (
     z_population        INT          NOT NULL,
     z_authority_cap     INT          NOT NULL,
     z_interest_cap      INT          NOT NULL,
-    z_cost              DOUBLE       NOT NULL,
+    z_cost              DOUBLE PRECISION       NOT NULL,
     CONSTRAINT pk_zone PRIMARY KEY (z_id)
 );
 
@@ -26,10 +26,10 @@ CREATE TABLE ZONE (
 CREATE TABLE ENTITY (
     e_id                BIGINT       NOT NULL,
     e_zone_id           BIGINT       NOT NULL,
-    e_x                 DOUBLE       NOT NULL,
-    e_y                 DOUBLE       NOT NULL,
-    e_vx                DOUBLE       NOT NULL,
-    e_vy                DOUBLE       NOT NULL,
+    e_x                 DOUBLE PRECISION       NOT NULL,
+    e_y                 DOUBLE PRECISION       NOT NULL,
+    e_vx                DOUBLE PRECISION       NOT NULL,
+    e_vy                DOUBLE PRECISION       NOT NULL,
     e_rtt_ms            INT          NOT NULL,
     e_last_tick         BIGINT       NOT NULL,
     CONSTRAINT pk_entity PRIMARY KEY (e_id),
@@ -45,7 +45,7 @@ CREATE TABLE EFFECT_ENTITY (
     ef_caster_id        BIGINT       NOT NULL,
     ef_zone_id          BIGINT       NOT NULL,
     ef_kind             VARCHAR(20)  NOT NULL,
-    ef_magnitude        DOUBLE       NOT NULL,
+    ef_magnitude        DOUBLE PRECISION       NOT NULL,
     ef_duration_ticks    INT          NOT NULL,
     ef_created_tick      BIGINT       NOT NULL,
     CONSTRAINT pk_effect_entity PRIMARY KEY (ef_id),
@@ -62,7 +62,7 @@ CREATE INDEX IDX_EFFECT_ZONE ON EFFECT_ENTITY (ef_zone_id);
 CREATE TABLE FANOUT_TARGET (
     ft_effect_id        BIGINT       NOT NULL,
     ft_target_entity_id BIGINT       NOT NULL,
-    ft_distance         DOUBLE       NOT NULL,
+    ft_distance         DOUBLE PRECISION       NOT NULL,
     CONSTRAINT pk_fanout_target PRIMARY KEY (ft_effect_id, ft_target_entity_id),
     FOREIGN KEY (ft_effect_id) REFERENCES EFFECT_ENTITY (ef_id),
     FOREIGN KEY (ft_target_entity_id) REFERENCES ENTITY (e_id)
