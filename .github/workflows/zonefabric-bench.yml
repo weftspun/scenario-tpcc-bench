@@ -11,6 +11,12 @@ on:
   pull_request:
   workflow_dispatch:
 
+# One run per branch/PR at a time - a new push cancels whatever's still
+# running for the same ref instead of piling up redundant concurrent runs.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   postgres-sweep:
     name: 1-node PostgreSQL 18
