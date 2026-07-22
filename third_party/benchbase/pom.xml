@@ -357,6 +357,32 @@
             <scope>compile</scope>
         </dependency>
 
+        <!-- fdb-relational-core's own pom declares these three (and other transitives) at
+             runtime scope, so Maven doesn't propagate them to OUR compile classpath even
+             though com.oltpbenchmark.util.fdbrelational.* compiles directly against their
+             classes (FDBDatabase/FDBDatabaseFactory, Options/RelationalDriver, MetricRegistry).
+             Pin the same versions fdb-relational-core:4.3.6.0 itself depends on. -->
+        <dependency>
+            <groupId>org.foundationdb</groupId>
+            <artifactId>fdb-record-layer-core</artifactId>
+            <version>4.3.6.0</version>
+            <scope>compile</scope>
+        </dependency>
+
+        <dependency>
+            <groupId>org.foundationdb</groupId>
+            <artifactId>fdb-relational-api</artifactId>
+            <version>4.3.6.0</version>
+            <scope>compile</scope>
+        </dependency>
+
+        <dependency>
+            <groupId>io.dropwizard.metrics</groupId>
+            <artifactId>metrics-core</artifactId>
+            <version>4.2.26</version>
+            <scope>compile</scope>
+        </dependency>
+
         <dependency>
             <groupId>junit</groupId>
             <artifactId>junit</artifactId>
