@@ -20,7 +20,6 @@ package com.oltpbenchmark.benchmarks.assetcdn;
 import com.oltpbenchmark.api.Loader;
 import com.oltpbenchmark.api.LoaderThread;
 import com.oltpbenchmark.catalog.Table;
-import com.oltpbenchmark.types.DatabaseType;
 import com.oltpbenchmark.util.SQLUtil;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
@@ -86,16 +85,8 @@ public final class AssetCdnLoader extends Loader<AssetCdnBenchmark> {
     @Override
     public void load(Connection conn) throws SQLException {
       // Same reasoning as ZoneFabricLoader: keep each asset's load in its
-      // own small transaction rather than one giant uncommitted batch, and
-      // skip explicit transaction control entirely for targets (like FDB
-      // Relational) whose JDBC driver doesn't support it - see
-      // ZoneFabricLoader's javadoc for the confirmed upstream driver error.
-      boolean explicitTransactions =
-          AssetCdnLoader.this.getDatabaseType() != DatabaseType.FDBRELATIONAL;
-
-      if (explicitTransactions) {
-        conn.setAutoCommit(false);
-      }
+      // own small transaction rather than one giant uncommitted batch.
+      conn.setAutoCommit(false);
 
       String owner = "owner-" + (this.assetId % 500);
       String contentHash = "hash-" + this.assetId + "-v1";
@@ -129,9 +120,7 @@ public final class AssetCdnLoader extends Loader<AssetCdnBenchmark> {
         stmt.setLong(5, 0L);
         stmt.executeUpdate();
       }
-      if (explicitTransactions) {
-        conn.commit();
-      }
+      conn.commit();
 
       try (PreparedStatement stmt = conn.prepareStatement(AssetCdnLoader.this.sqlUserEntitlement)) {
         int batchSize = 0;
@@ -144,17 +133,13 @@ public final class AssetCdnLoader extends Loader<AssetCdnBenchmark> {
 
           if (++batchSize >= workConf.getBatchSize()) {
             stmt.executeBatch();
-            if (explicitTransactions) {
-              conn.commit();
-            }
+            conn.commit();
             batchSize = 0;
           }
         }
         if (batchSize > 0) {
           stmt.executeBatch();
-          if (explicitTransactions) {
-            conn.commit();
-          }
+          conn.commit();
         }
       }
     }
