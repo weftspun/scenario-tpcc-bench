@@ -1,4 +1,4 @@
-name: TPC-C sweep (1-node vs 2-node CockroachDB)
+name: TPC-C sweep (CockroachDB)
 
 on:
   push:
@@ -8,11 +8,7 @@ on:
 
 jobs:
   sweep:
-    strategy:
-      fail-fast: false
-      matrix:
-        nodes: [1, 2]
-    name: "${{ matrix.nodes }}-node CockroachDB"
+    name: 1-node CockroachDB
     runs-on: ubuntu-latest
     env:
       # Scaled down from the local-dev defaults (5 warehouses, 15s/level) so
@@ -33,49 +29,13 @@ jobs:
       - name: Create docker network
         run: docker network create crdb-net
 
-      - name: Start 1-node CockroachDB
-        if: matrix.nodes == 1
+      - name: Start CockroachDB
         run: |
           docker run -d --name crdb1 --network crdb-net \
             docker.io/cockroachdb/cockroach:latest-v24.3 \
             start-single-node --insecure --store=type=mem,size=0.25
 
-      - name: Start 2-node CockroachDB
-        if: matrix.nodes == 2
-        run: |
-          docker run -d --name crdb1 --network crdb-net \
-            docker.io/cockroachdb/cockroach:latest-v24.3 \
-            start --insecure --store=type=mem,size=0.25 \
-            --join=crdb1:26257,crdb2:26257 --advertise-addr=crdb1 \
-            --listen-addr=0.0.0.0:26257 --http-addr=0.0.0.0:8080
-          docker run -d --name crdb2 --network crdb-net \
-            docker.io/cockroachdb/cockroach:latest-v24.3 \
-            start --insecure --store=type=mem,size=0.25 \
-            --join=crdb1:26257,crdb2:26257 --advertise-addr=crdb2 \
-            --listen-addr=0.0.0.0:26257 --http-addr=0.0.0.0:8080
-
-      - name: Wait for CockroachDB to accept connections
-        run: |
-          for i in $(seq 1 30); do
-            if docker exec crdb1 ./cockroach sql --insecure --execute="SELECT 1" >/dev/null 2>&1; then
-              echo "crdb1 reachable"
-              break
-            fi
-            sleep 2
-          done
-
-      - name: Initialize cluster (2-node only)
-        if: matrix.nodes == 2
-        run: |
-          for i in $(seq 1 15); do
-            if docker exec crdb1 ./cockroach init --insecure --host=crdb1 2>&1; then
-              break
-            fi
-            echo "init not ready yet, retrying..."
-            sleep 2
-          done
-
-      - name: Wait for cluster to be ready and create database
+      - name: Wait for CockroachDB to accept connections and create database
         run: |
           for i in $(seq 1 30); do
             if docker exec crdb1 ./cockroach sql --insecure --execute="SELECT 1" >/dev/null 2>&1; then
@@ -106,7 +66,7 @@ jobs:
               -e "s|<batchsize>128</batchsize>|<batchsize>${BATCHSIZE}</batchsize>|" \
               "$BASE" > config/cockroachdb/sweep_load.xml
 
-          echo "=== LOAD (${WAREHOUSES} warehouses, ${{ matrix.nodes }}-node) ==="
+          echo "=== LOAD (${WAREHOUSES} warehouses) ==="
           docker run --rm --network crdb-net \
             -v "$PWD":/bb:z -w /bb \
             eclipse-temurin:23-jdk \
@@ -129,7 +89,7 @@ jobs:
       - name: Summarize results
         working-directory: third_party/benchbase/target/benchbase-cockroachdb
         run: |
-          echo "## ${{ matrix.nodes }}-node CockroachDB TPC-C sweep" >> "$GITHUB_STEP_SUMMARY"
+          echo "## CockroachDB TPC-C sweep" >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
           for f in $(ls -t results/*.summary.json | head -"$(echo "$TERMINALS_LIST" | wc -w)"); do
             terminals=$(grep -o '"terminals": "[0-9]*"' "$f" | grep -o '[0-9]*')
@@ -143,11 +103,9 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: tpcc-results-${{ matrix.nodes }}node
+          name: tpcc-results
           path: third_party/benchbase/target/benchbase-cockroachdb/results/*.summary.json
 
       - name: Dump CockroachDB logs on failure
         if: failure()
-        run: |
-          docker logs crdb1 || true
-          docker logs crdb2 2>/dev/null || true
+        run: docker logs crdb1 || true
