@@ -31,6 +31,15 @@ public enum DatabaseType {
   CASSANDRA(true, true),
   COCKROACHDB(false, false, true),
   DB2(true, false),
+  // FDB Relational Layer's JDBC driver (org.foundationdb:fdb-relational-jdbc)
+  // implements DatabaseMetaData.getTables() as a hardcoded, mislabeled
+  // "select * from databases" (see its own "TODO...FIX" comment) and
+  // getColumns() as unconditionally UNSUPPORTED_OPERATION - real, confirmed
+  // upstream driver limitations, not something a DDL/dialect fix can work
+  // around. Routed through the same in-memory-HSQLDB catalog-derivation
+  // path as HSQLDB/NOISEPAGE (see SQLUtil.getCatalog()) so BenchBase's
+  // loader never depends on FDB Relational's own metadata introspection.
+  FDBRELATIONAL(false, false),
   H2(true, false),
   HSQLDB(false, false),
   POSTGRES(false, false, true, true),

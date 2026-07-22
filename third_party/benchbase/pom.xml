@@ -191,6 +191,27 @@
             </dependencies>
         </profile>
         <profile>
+            <id>fdbrelational</id>
+            <activation>
+                <property>
+                    <name>env.BENCHBASE_PROFILE</name>
+                    <value>fdbrelational</value>
+                </property>
+            </activation>
+            <properties>
+                <classifier>fdbrelational</classifier>
+            </properties>
+            <dependencies>
+                <dependency>
+                    <groupId>org.foundationdb</groupId>
+                    <artifactId>fdb-relational-jdbc</artifactId>
+                    <version>4.3.6.0</version>
+                    <classifier>driver</classifier>
+                    <scope>runtime</scope>
+                </dependency>
+            </dependencies>
+        </profile>
+        <profile>
             <id>phoenix</id>
             <activation>
                 <property>
@@ -317,10 +338,14 @@
         </dependency>
 
         <dependency>
+            <!-- compile (not test) scope: SQLUtil.getCatalogHSQLDB() uses this driver
+                 at runtime to derive the catalog for DatabaseType.HSQLDB/NOISEPAGE/
+                 FDBRELATIONAL targets whose own JDBC metadata is unusable, so it must
+                 ship in the packaged jar, not just the test classpath. -->
             <groupId>org.hsqldb</groupId>
             <artifactId>hsqldb</artifactId>
             <version>2.7.4</version>
-            <scope>test</scope>
+            <scope>compile</scope>
         </dependency>
 
         <dependency>

@@ -1,0 +1,47 @@
+<?xml version="1.0"?>
+<parameters>
+
+    <!-- Connection details. The database/schema must already exist - see
+         FdbRelBootstrap in this repo's README, since FDB Relational's DDL
+         dialect can't be bootstrapped through BenchBase's own connect-then-
+         create-database flow (see DatabaseType.FDBRELATIONAL's javadoc). -->
+    <type>FDBRELATIONAL</type>
+    <driver>com.apple.foundationdb.relational.jdbc.JDBCRelationalDriver</driver>
+    <url>jdbc:relational://localhost:1111/frl/zonefabric?schema=PUBLIC</url>
+    <username></username>
+    <password></password>
+    <isolation>TRANSACTION_SERIALIZABLE</isolation>
+    <batchsize>128</batchsize>
+
+    <!-- Scale factor is the number of zones -->
+    <scalefactor>5</scalefactor>
+
+    <!-- The workload -->
+    <terminals>1</terminals>
+    <works>
+        <work>
+            <time>60</time>
+            <rate>10000</rate>
+            <!-- CastSpell, ZoneAuthorityHandoff, EntityStateQuery, ZoneSplitMerge, InterestFanoutScan -->
+            <weights>40,15,30,3,12</weights>
+        </work>
+    </works>
+
+    <transactiontypes>
+        <transactiontype>
+            <name>CastSpell</name>
+        </transactiontype>
+        <transactiontype>
+            <name>ZoneAuthorityHandoff</name>
+        </transactiontype>
+        <transactiontype>
+            <name>EntityStateQuery</name>
+        </transactiontype>
+        <transactiontype>
+            <name>ZoneSplitMerge</name>
+        </transactiontype>
+        <transactiontype>
+            <name>InterestFanoutScan</name>
+        </transactiontype>
+    </transactiontypes>
+</parameters>
