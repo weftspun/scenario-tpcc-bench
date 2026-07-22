@@ -1,4 +1,9 @@
-name: TPC-C sweep (CockroachDB)
+name: zonefabric sweep (PostgreSQL / FDB Relational)
+
+# CockroachDB was dropped as a comparison target for this benchmark (see
+# weftspun/scenario-tpcc-bench#3, #6, #7). Comparison is now PostgreSQL 18
+# (single-node RDBMS baseline) vs FoundationDB Relational Layer (once its
+# BenchBase integration lands - see #3 for status).
 
 on:
   push:
@@ -6,18 +11,37 @@ on:
   pull_request:
   workflow_dispatch:
 
+# One run per branch/PR at a time - a new push cancels whatever's still
+# running for the same ref instead of piling up redundant concurrent runs.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  sweep:
-    name: 1-node CockroachDB
+  postgres-sweep:
+    name: 1-node PostgreSQL 18
     runs-on: ubuntu-latest
     env:
-      # Scaled down from the local-dev defaults (5 warehouses, 15s/level) so
-      # this stays fast enough for CI while still producing a real
+      # Scaled down from the local-dev defaults (5 zones, 60s/level) so this
+      # stays fast enough for CI while still producing a real
       # concurrency-vs-throughput curve.
-      WAREHOUSES: 2
-      BATCHSIZE: 500
+      ZONES: 5
+      BATCHSIZE: 128
       TERMINALS_LIST: "1 4 8"
       RUN_SECONDS: 10
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: benchbase
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - uses: actions/checkout@v4
 
@@ -26,70 +50,43 @@ jobs:
           distribution: temurin
           java-version: "23"
 
-      - name: Create docker network
-        run: docker network create crdb-net
-
-      - name: Start CockroachDB
-        run: |
-          docker run -d --name crdb1 --network crdb-net \
-            docker.io/cockroachdb/cockroach:latest-v24.3 \
-            start-single-node --insecure --store=type=mem,size=0.25
-
-      - name: Wait for CockroachDB to accept connections and create database
-        run: |
-          for i in $(seq 1 30); do
-            if docker exec crdb1 ./cockroach sql --insecure --execute="SELECT 1" >/dev/null 2>&1; then
-              break
-            fi
-            sleep 2
-          done
-          docker exec crdb1 ./cockroach sql --insecure --execute="CREATE DATABASE IF NOT EXISTS benchbase;"
-          docker exec crdb1 ./cockroach sql --insecure --execute="SHOW DATABASES;"
-
-      - name: Build BenchBase (cockroachdb profile)
+      - name: Build BenchBase (postgres profile)
         working-directory: third_party/benchbase
-        run: mvn -q clean package -P cockroachdb -DskipTests
+        run: mvn -q clean package -P postgres -DskipTests
 
       - name: Extract BenchBase
         working-directory: third_party/benchbase
         run: |
-          mkdir -p target/benchbase-cockroachdb
-          tar xzf target/benchbase-cockroachdb.tgz -C target/benchbase-cockroachdb --strip-components=1
+          mkdir -p target/benchbase-postgres
+          tar xzf target/benchbase-postgres.tgz -C target/benchbase-postgres --strip-components=1
 
       - name: Run sweep
-        working-directory: third_party/benchbase/target/benchbase-cockroachdb
+        working-directory: third_party/benchbase/target/benchbase-postgres
         run: |
           set -euo pipefail
-          BASE=config/cockroachdb/sample_tpcc_config.xml
-          sed -e "s|localhost:26257|crdb1:26257|" \
-              -e "s|<scalefactor>1</scalefactor>|<scalefactor>${WAREHOUSES}</scalefactor>|" \
+          BASE=config/postgres/sample_zonefabric_config.xml
+          sed -e "s|<scalefactor>5</scalefactor>|<scalefactor>${ZONES}</scalefactor>|" \
               -e "s|<batchsize>128</batchsize>|<batchsize>${BATCHSIZE}</batchsize>|" \
-              "$BASE" > config/cockroachdb/sweep_load.xml
+              "$BASE" > config/postgres/sweep_load.xml
 
-          echo "=== LOAD (${WAREHOUSES} warehouses) ==="
-          docker run --rm --network crdb-net \
-            -v "$PWD":/bb:z -w /bb \
-            eclipse-temurin:23-jdk \
-            java -jar benchbase.jar -b tpcc -c config/cockroachdb/sweep_load.xml \
+          echo "=== LOAD (${ZONES} zones) ==="
+          java -jar benchbase.jar -b zonefabric -c config/postgres/sweep_load.xml \
             --create=true --load=true --execute=false
 
           for T in $TERMINALS_LIST; do
             sed -e "s|<terminals>1</terminals>|<terminals>${T}</terminals>|" \
                 -e "s|<time>60</time>|<time>${RUN_SECONDS}</time>|" \
-                config/cockroachdb/sweep_load.xml > "config/cockroachdb/sweep_t${T}.xml"
+                config/postgres/sweep_load.xml > "config/postgres/sweep_t${T}.xml"
             echo "=== TERMINALS=$T ==="
-            docker run --rm --network crdb-net \
-              -v "$PWD":/bb:z -w /bb \
-              eclipse-temurin:23-jdk \
-              java -jar benchbase.jar -b tpcc -c "config/cockroachdb/sweep_t${T}.xml" \
+            java -jar benchbase.jar -b zonefabric -c "config/postgres/sweep_t${T}.xml" \
               --create=false --load=false --execute=true \
               2>&1 | grep -E "requests/sec|state=ERROR" || true
           done
 
       - name: Summarize results
-        working-directory: third_party/benchbase/target/benchbase-cockroachdb
+        working-directory: third_party/benchbase/target/benchbase-postgres
         run: |
-          echo "## CockroachDB TPC-C sweep" >> "$GITHUB_STEP_SUMMARY"
+          echo "## zonefabric PostgreSQL 18 sweep" >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
           for f in $(ls -t results/*.summary.json | head -"$(echo "$TERMINALS_LIST" | wc -w)"); do
             terminals=$(grep -o '"terminals": "[0-9]*"' "$f" | grep -o '[0-9]*')
@@ -103,9 +100,11 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: tpcc-results
-          path: third_party/benchbase/target/benchbase-cockroachdb/results/*.summary.json
+          name: zonefabric-postgres-results
+          path: third_party/benchbase/target/benchbase-postgres/results/*.summary.json
 
-      - name: Dump CockroachDB logs on failure
-        if: failure()
-        run: docker logs crdb1 || true
+  # FDB Relational sweep is intentionally not wired into CI yet: it needs a
+  # live FoundationDB cluster + fdb-relational-server, and the BenchBase
+  # integration (DatabaseType.FDBRELATIONAL, HSQLDB-catalog-derivation
+  # workaround, external schema bootstrap) is still being verified
+  # end-to-end on a separate branch. Tracked in #3.
