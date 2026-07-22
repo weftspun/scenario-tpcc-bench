@@ -40,8 +40,7 @@ public final class FdbRelSchemaBootstrap {
     String schemaName = FdbRelConstants.ZONEFABRIC_SCHEMA_NAME;
     String templateName = FdbRelConstants.ZONEFABRIC_TEMPLATE_NAME;
 
-    try (Connection sys =
-        DriverManager.getConnection("jdbc:embed:/" + FdbRelConstants.KEYSPACE_DOMAIN + "?schema=CATALOG")) {
+    try (Connection sys = DriverManager.getConnection("jdbc:embed:/__SYS?schema=CATALOG")) {
       try (Statement st = sys.createStatement()) {
         st.execute("drop database if exists \"" + dbPath + "\"");
         st.execute("drop schema template if exists " + templateName);
