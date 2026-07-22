@@ -191,6 +191,23 @@
             </dependencies>
         </profile>
         <profile>
+            <id>fdbrelational</id>
+            <activation>
+                <property>
+                    <name>env.BENCHBASE_PROFILE</name>
+                    <value>fdbrelational</value>
+                </property>
+            </activation>
+            <properties>
+                <!-- fdb-relational-core (org.foundationdb's EMBEDDED, in-process FDB Relational
+                     Layer driver, not fdb-relational-jdbc's network/gRPC "driver" classifier) is
+                     an unconditional dependency further up this pom - see that dependency's
+                     comment - since com.oltpbenchmark.util.fdbrelational.* is part of the main
+                     source tree and every profile's build needs it on the compile classpath. -->
+                <classifier>fdbrelational</classifier>
+            </properties>
+        </profile>
+        <profile>
             <id>phoenix</id>
             <activation>
                 <property>
@@ -317,10 +334,53 @@
         </dependency>
 
         <dependency>
+            <!-- compile (not test) scope: SQLUtil.getCatalogHSQLDB() uses this driver
+                 at runtime to derive the catalog for DatabaseType.HSQLDB/NOISEPAGE/
+                 FDBRELATIONAL targets whose own JDBC metadata is unusable, so it must
+                 ship in the packaged jar, not just the test classpath. -->
             <groupId>org.hsqldb</groupId>
             <artifactId>hsqldb</artifactId>
             <version>2.7.4</version>
-            <scope>test</scope>
+            <scope>compile</scope>
+        </dependency>
+
+        <dependency>
+            <!-- compile scope, unconditional (not gated to the fdbrelational profile):
+                 com.oltpbenchmark.util.fdbrelational.* is part of the main source tree and
+                 compiles directly against EmbeddedRelationalDriver/RecordLayerEngine/etc, so
+                 every profile's build needs these classes on the compile classpath even if only
+                 the fdbrelational profile actually uses them at runtime - same reasoning as
+                 hsqldb above. -->
+            <groupId>org.foundationdb</groupId>
+            <artifactId>fdb-relational-core</artifactId>
+            <version>4.3.6.0</version>
+            <scope>compile</scope>
+        </dependency>
+
+        <!-- fdb-relational-core's own pom declares these three (and other transitives) at
+             runtime scope, so Maven doesn't propagate them to OUR compile classpath even
+             though com.oltpbenchmark.util.fdbrelational.* compiles directly against their
+             classes (FDBDatabase/FDBDatabaseFactory, Options/RelationalDriver, MetricRegistry).
+             Pin the same versions fdb-relational-core:4.3.6.0 itself depends on. -->
+        <dependency>
+            <groupId>org.foundationdb</groupId>
+            <artifactId>fdb-record-layer-core</artifactId>
+            <version>4.3.6.0</version>
+            <scope>compile</scope>
+        </dependency>
+
+        <dependency>
+            <groupId>org.foundationdb</groupId>
+            <artifactId>fdb-relational-api</artifactId>
+            <version>4.3.6.0</version>
+            <scope>compile</scope>
+        </dependency>
+
+        <dependency>
+            <groupId>io.dropwizard.metrics</groupId>
+            <artifactId>metrics-core</artifactId>
+            <version>4.2.26</version>
+            <scope>compile</scope>
         </dependency>
 
         <dependency>

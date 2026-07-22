@@ -1,0 +1,134 @@
+name: tpcc sweep (FDB Relational Layer)
+
+# Runs BenchBase's own stock `tpcc` benchmark, unmodified, against a real
+# single-node FoundationDB cluster using FDB Relational Layer's EMBEDDED
+# (in-process) driver - see com.oltpbenchmark.util.fdbrelational.* and #3
+# for the fuller design writeup and known open issues. No separate
+# fdb-relational-server process or gRPC network driver is involved:
+# BenchBase's own JVM links FDB's client library directly, the same way
+# any other FDB client would.
+#
+# Deliberately tpcc, not a purpose-built benchmark: the goal here is to see
+# how much of BenchBase's existing, unmodified TPCCLoader/procedures work
+# as-is against FRL's type-mapped schema (see FdbRelSchemaBootstrap's
+# javadoc) before building a purpose-built benchmark's own FRL integration
+# on top of this.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# One run per branch/PR at a time - a new push cancels whatever's still
+# running for the same ref instead of piling up redundant concurrent runs.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  FDB_VERSION: "7.3.77"
+
+jobs:
+  fdbrelational-sweep:
+    name: 1-node FDB Relational
+    runs-on: ubuntu-latest
+    env:
+      WAREHOUSES: 2
+      BATCHSIZE: 128
+      TERMINALS_LIST: "1 4"
+      RUN_SECONDS: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "23"
+
+      - name: Install FoundationDB (single-node)
+        run: |
+          set -euo pipefail
+          curl -fLO "https://github.com/apple/foundationdb/releases/download/${FDB_VERSION}/foundationdb-clients_${FDB_VERSION}-1_amd64.deb"
+          curl -fLO "https://github.com/apple/foundationdb/releases/download/${FDB_VERSION}/foundationdb-server_${FDB_VERSION}-1_amd64.deb"
+          sudo dpkg -i foundationdb-clients_${FDB_VERSION}-1_amd64.deb foundationdb-server_${FDB_VERSION}-1_amd64.deb
+          # The server package's postinst normally configures a default
+          # single-process database already; make it explicit and
+          # idempotent rather than relying on that side effect.
+          for i in $(seq 1 30); do
+            if sudo fdbcli --exec "configure new single memory" 2>&1 | grep -qE "created|already"; then
+              break
+            fi
+            sleep 1
+          done
+          sudo fdbcli --exec "status minimal"
+          cat /etc/foundationdb/fdb.cluster
+
+      - name: Build BenchBase (fdbrelational profile)
+        working-directory: third_party/benchbase
+        run: mvn -q clean package -P fdbrelational -DskipTests
+
+      - name: Extract BenchBase
+        working-directory: third_party/benchbase
+        run: |
+          mkdir -p target/benchbase-fdbrelational
+          tar xzf target/benchbase-fdbrelational.tgz -C target/benchbase-fdbrelational --strip-components=1
+
+      - name: Bootstrap tpcc schema
+        working-directory: third_party/benchbase/target/benchbase-fdbrelational
+        # benchbase.jar only holds BenchBase's own classes - its dependencies (including
+        # fdb-relational-core and its transitives) live in lib/, wired up via the jar's
+        # manifest Class-Path, which only takes effect under `-jar`, not `-cp`. Our custom
+        # main classes need an explicit classpath instead.
+        run: java -cp "benchbase.jar:lib/*" com.oltpbenchmark.util.fdbrelational.FdbRelSchemaBootstrap
+
+      - name: Run sweep
+        working-directory: third_party/benchbase/target/benchbase-fdbrelational
+        run: |
+          set -euo pipefail
+          BASE=config/fdbrelational/sample_tpcc_config.xml
+          sed -e "s|<scalefactor>1</scalefactor>|<scalefactor>${WAREHOUSES}</scalefactor>|" \
+              -e "s|<batchsize>128</batchsize>|<batchsize>${BATCHSIZE}</batchsize>|" \
+              "$BASE" > config/fdbrelational/sweep_load.xml
+
+          echo "=== LOAD (${WAREHOUSES} warehouses) ==="
+          java -cp "benchbase.jar:lib/*" com.oltpbenchmark.util.fdbrelational.FdbRelEmbeddedLauncher \
+            -b tpcc -c config/fdbrelational/sweep_load.xml \
+            --create=false --load=true --execute=false
+
+          for T in $TERMINALS_LIST; do
+            sed -e "s|<terminals>1</terminals>|<terminals>${T}</terminals>|" \
+                -e "s|<time>60</time>|<time>${RUN_SECONDS}</time>|" \
+                config/fdbrelational/sweep_load.xml > "config/fdbrelational/sweep_t${T}.xml"
+            echo "=== TERMINALS=$T ==="
+            java -cp "benchbase.jar:lib/*" com.oltpbenchmark.util.fdbrelational.FdbRelEmbeddedLauncher \
+              -b tpcc -c "config/fdbrelational/sweep_t${T}.xml" \
+              --create=false --load=false --execute=true \
+              2>&1 | grep -E "requests/sec|state=ERROR|Exception|ERROR" -A3 || true
+          done
+
+      - name: Summarize results
+        if: always()
+        working-directory: third_party/benchbase/target/benchbase-fdbrelational
+        run: |
+          echo "## tpcc FDB Relational sweep" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          for f in $(ls -t results/*.summary.json 2>/dev/null | head -"$(echo "$TERMINALS_LIST" | wc -w)"); do
+            terminals=$(grep -o '"terminals": "[0-9]*"' "$f" | grep -o '[0-9]*')
+            tp=$(grep -o '"Throughput (requests/second)": [0-9.]*' "$f" | grep -o '[0-9.]*$')
+            gp=$(grep -o '"Goodput (requests/second)": [0-9.]*' "$f" | grep -o '[0-9.]*$')
+            echo "terminals=$terminals throughput=$tp goodput=$gp" >> "$GITHUB_STEP_SUMMARY"
+          done
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload result artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tpcc-fdbrelational-results
+          path: third_party/benchbase/target/benchbase-fdbrelational/results/*.summary.json
+          if-no-files-found: ignore
+
+      - name: Dump FDB status on failure
+        if: failure()
+        run: sudo fdbcli --exec "status details" || true
